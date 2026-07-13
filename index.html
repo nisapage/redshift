@@ -1,0 +1,238 @@
+
+<style>
+  .ctrl { display:flex; align-items:center; gap:10px; margin-bottom:10px; font-size:13px; color:var(--text-secondary); }
+  .ctrl label { min-width:90px; }
+  .ctrl input[type=range] { flex:1; }
+  .ctrl span { min-width:60px; font-size:13px; font-weight:500; color:var(--text-primary); }
+  .tab-row { display:flex; gap:8px; margin-bottom:14px; }
+  .tab { padding:6px 16px; border-radius:var(--radius); border:0.5px solid var(--border-strong); background:var(--surface-1); color:var(--text-secondary); cursor:pointer; font-size:13px; }
+  .tab.active { background:var(--bg-accent); color:var(--text-accent); border-color:var(--border-accent); font-weight:500; }
+  .legend-row { display:flex; gap:18px; flex-wrap:wrap; margin-top:8px; font-size:12px; color:var(--text-secondary); }
+  .legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:5px; vertical-align:middle; }
+  .info-box { background:var(--surface-1); border:0.5px solid var(--border); border-radius:var(--radius); padding:10px 14px; margin-top:10px; font-size:12px; color:var(--text-secondary); line-height:1.6; }
+  canvas { display:block; width:100%; }
+</style>
+
+<h2 class="sr-only">Visualisasi pergeseran spektrum galaksi — early-type dan late-type dengan kontrol blueshift/redshift interaktif</h2>
+
+<div style="padding:1rem 0;">
+  <div class="tab-row">
+    <button class="tab active" onclick="setMode('early')">Early-type (E, S0)</button>
+    <button class="tab" onclick="setMode('late')">Late-type (S, Irr)</button>
+    <button class="tab" onclick="setMode('both')">Keduanya</button>
+  </div>
+
+  <div class="ctrl">
+    <label>Pergeseran</label>
+    <input type="range" id="shift" min="-200" max="200" value="0" step="1" oninput="draw()">
+    <span id="shiftLabel">Normal (0)</span>
+  </div>
+
+  <div style="position:relative; width:100%; height:280px;">
+    <canvas id="c" role="img" aria-label="Grafik spektrum galaksi yang menunjukkan fluks terhadap panjang gelombang, dengan kontrol interaktif untuk mensimulasikan redshift dan blueshift"></canvas>
+  </div>
+
+  <div class="legend-row" id="legend"></div>
+  <div class="info-box" id="infoBox">Geser slider untuk mensimulasikan blueshift (kiri) atau redshift (kanan).</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+let mode = 'early';
+let chart = null;
+
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['early','late','both'][i]===m));
+  draw();
+}
+
+function genSpectrum(type, shiftPx) {
+  const N = 300;
+  const xs = [];
+  const ys = [];
+  for (let i = 0; i < N; i++) {
+    const lambda = 2000 + i * 20;
+    xs.push(lambda);
+    let flux = 0;
+
+    if (type === 'early') {
+      if (lambda < 4000) flux = 0.15 + lambda/40000;
+      else flux = 0.25 + (lambda-4000)/8000;
+      if (lambda >= 3900 && lambda <= 4100) flux *= 0.55;
+    } else {
+      if (lambda < 4000) flux = 0.55 + lambda/20000;
+      else flux = 0.65 - (lambda-4000)/30000;
+      if (lambda >= 6500 && lambda <= 6620) flux += 0.4;
+      if (lambda >= 4830 && lambda <= 4900) flux += 0.2;
+      if (lambda >= 4940 && lambda <= 5030) flux += 0.18;
+      if (lambda < 4000) flux += 0.1;
+    }
+    ys.push(Math.max(0, flux));
+  }
+
+  if (shiftPx === 0) return { xs, ys };
+
+  const shiftedXs = xs.map(x => x + shiftPx * 20);
+  return { xs: shiftedXs, ys };
+}
+
+function makeLabels() {
+  const minL = 1500, maxL = 12000;
+  const ticks = [1500,2000,2500,3000,3500,4000,4500,5000,5500,6000,6500,7000,8000,10000,12000];
+  return { ticks, minL, maxL };
+}
+
+function regionColor(lambda) {
+  if (lambda < 2000) return 'rgba(160,0,200,0.10)';
+  if (lambda < 3800) return 'rgba(130,0,220,0.07)';
+  if (lambda < 7800) return null;
+  return 'rgba(180,60,0,0.07)';
+}
+
+function draw() {
+  const shiftVal = parseInt(document.getElementById('shift').value);
+  const label = shiftVal === 0 ? 'Normal (0)' : shiftVal < 0 ? `Blueshift (${shiftVal})` : `Redshift (+${shiftVal})`;
+  document.getElementById('shiftLabel').textContent = label;
+
+  const datasets = [];
+  const colors = { early: '#d85a30', late: '#185fa5' };
+
+  const types = mode === 'both' ? ['early','late'] : [mode];
+  types.forEach(t => {
+    const { xs, ys } = genSpectrum(t, shiftVal);
+    datasets.push({
+      label: t === 'early' ? 'Early-type' : 'Late-type',
+      data: xs.map((x,i) => ({ x, y: ys[i] })),
+      borderColor: colors[t],
+      backgroundColor: 'transparent',
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.3,
+    });
+  });
+
+  const canvas = document.getElementById('c');
+  if (chart) { chart.destroy(); }
+
+  chart = new Chart(canvas, {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false },
+        annotation: {}
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          min: 1500,
+          max: 12000,
+          title: { display: true, text: 'Panjang gelombang (Å) — biru kiri → merah/infrared kanan', font: { size: 11 }, color: '#898781' },
+          ticks: {
+            callback: v => {
+              if ([2000,3000,4000,5000,6000,7000,10000].includes(v)) return v + 'Å';
+              return '';
+            },
+            color: '#898781',
+            font: { size: 10 },
+            maxRotation: 0,
+          },
+          grid: { color: 'rgba(128,128,128,0.12)' }
+        },
+        y: {
+          min: 0,
+          max: 1.4,
+          title: { display: true, text: 'Fluks (relatif)', font: { size: 11 }, color: '#898781' },
+          ticks: { display: false },
+          grid: { color: 'rgba(128,128,128,0.12)' }
+        }
+      },
+      showLine: true,
+    },
+    plugins: [{
+      id: 'regions',
+      beforeDraw(chart) {
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { x } } = chart;
+        const regions = [
+          { from: 1500, to: 3800, color: 'rgba(120,0,200,0.07)', label: 'UV' },
+          { from: 3800, to: 7800, color: 'rgba(120,200,100,0.05)', label: 'Cahaya tampak' },
+          { from: 7800, to: 12000, color: 'rgba(200,60,0,0.09)', label: 'Infrared' },
+        ];
+        regions.forEach(r => {
+          const x1 = x.getPixelForValue(r.from);
+          const x2 = x.getPixelForValue(r.to);
+          ctx.save();
+          ctx.fillStyle = r.color;
+          ctx.fillRect(Math.max(x1,left), top, Math.min(x2,right)-Math.max(x1,left), bottom-top);
+          ctx.restore();
+          ctx.save();
+          ctx.fillStyle = '#898781';
+          ctx.font = '10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(r.label, (Math.max(x1,left)+Math.min(x2,right))/2, top+12);
+          ctx.restore();
+        });
+
+        const refLines = [
+          { x: 4000, color: '#c3c2b7', label: '4000Å break' },
+          { x: 6563, color: '#e24b4a', label: 'Hα' },
+          { x: 4861, color: '#2a78d6', label: 'Hβ' },
+        ];
+        refLines.forEach(r => {
+          const px = x.getPixelForValue(r.x);
+          if (px < left || px > right) return;
+          ctx.save();
+          ctx.strokeStyle = r.color;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4,3]);
+          ctx.beginPath();
+          ctx.moveTo(px, top+16);
+          ctx.lineTo(px, bottom);
+          ctx.stroke();
+          ctx.fillStyle = r.color;
+          ctx.font = '9px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(r.label, px, top+26);
+          ctx.restore();
+        });
+      }
+    }]
+  });
+
+  updateLegend(shiftVal, types);
+  updateInfo(shiftVal, types);
+}
+
+function updateLegend(shift, types) {
+  const colors = { early: '#d85a30', late: '#185fa5' };
+  const names = { early: 'Early-type (merah, tua)', late: 'Late-type (biru, muda)' };
+  let html = types.map(t => `<span><span class="legend-dot" style="background:${colors[t]}"></span>${names[t]}</span>`).join('');
+  html += `<span><span class="legend-dot" style="background:#898781"></span>Garis putus = referensi (4000Å, Hα, Hβ)</span>`;
+  document.getElementById('legend').innerHTML = html;
+}
+
+function updateInfo(shift, types) {
+  let txt = '';
+  if (shift === 0) {
+    txt = `<b>Kondisi normal (tidak ada pergeseran).</b> Garis-garis spektrum berada di posisi laboratorium aslinya.`;
+    if (types.includes('early')) txt += ' Early-type: terlihat <i>break</i> tajam di 4000Å dan kontinum naik ke merah.';
+    if (types.includes('late')) txt += ' Late-type: terlihat garis emisi Hα (6563Å), Hβ (4861Å), dan kontinum tinggi di biru.';
+  } else if (shift < 0) {
+    const desc = shift < -100 ? 'Blueshift ekstrem — galaksi bergerak sangat cepat mendekati kita.' : 'Blueshift — galaksi bergerak mendekati kita.';
+    txt = `<b>${desc}</b> Seluruh spektrum bergeser ke kiri (panjang gelombang lebih pendek). Garis referensi (Hα, Hβ, 4000Å break) ikut bergeser — pengamat harus tahu nilai aslinya untuk mengenali garis ini.`;
+    if (shift < -150) txt += ' Pada blueshift sangat besar, sebagian sinyal memasuki rentang UV yang sulit diamati optik biasa.';
+  } else {
+    const desc = shift > 100 ? 'Redshift besar — galaksi sangat jauh dari kita (ekspansi alam semesta).' : 'Redshift — galaksi menjauhi kita.';
+    txt = `<b>${desc}</b> Seluruh spektrum bergeser ke kanan (panjang gelombang lebih panjang). Garis Hα yang tadinya di 6563Å (merah) bisa bergeser ke infrared.`;
+    if (shift > 120) txt += ' Pada redshift besar seperti ini, dibutuhkan teleskop infrared (seperti JWST) untuk mendeteksi sinyal galaksi.';
+  }
+  document.getElementById('infoBox').innerHTML = txt;
+}
+
+draw();
+</script>
